@@ -1,0 +1,38 @@
+schema:
+  main: postgres_main
+  remote: postgres_remote
+
+spring:
+  application:
+    name: fwd-vs-datalink
+  datasource:
+    url: jdbc:postgresql://localhost:5432/postgres_main
+    username: username
+    password: password
+    hikari:
+      schema: ${schema.main}
+  jpa:
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        default_schema: ${schema.main}
+
+# Connection from postgres-main to postgres-remote.
+# host/port must be reachable FROM INSIDE the postgres-main container,
+# hence the compose service name and internal port.
+remote-db:
+  host: postgres-remote
+  port: 5432
+  database: postgres_remote
+  username: username
+  password: password
+  dblink:
+    server-name: remote_dblink
+  fdw:
+    server-name: remote_fdw
+    local-schema: ${schema.main}
+    # only these remote tables are imported as foreign tables;
+    # omit or leave empty to import all tables of the remote schema
+    tables:
+      - account_details

@@ -1,0 +1,43 @@
+services:
+  postgres-main:
+    image: postgres:17-alpine
+    container_name: postgres-main
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: postgres_main
+      POSTGRES_USER: username
+      POSTGRES_PASSWORD: password
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - ./initdb/main:/docker-entrypoint-initdb.d
+
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U username -d postgres_main" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  postgres-remote:
+    image: postgres:17-alpine
+    container_name: postgres-remote
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: postgres_remote
+      POSTGRES_USER: username
+      POSTGRES_PASSWORD: password
+
+    ports:
+      - "5433:5432"
+
+    volumes:
+      - ./initdb/remote:/docker-entrypoint-initdb.d
+
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U username -d postgres_remote" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
