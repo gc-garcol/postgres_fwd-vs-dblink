@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trade Aggregation (postgres_fdw)</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --text: #1c2733;
+    --muted: #5c6b7a;
+    --border: #dde3ea;
+    --accent: #2563eb;
+    --accent-text: #ffffff;
+    --row-hover: #f0f4fa;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111827;
+      --card: #1f2937;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --border: #374151;
+      --accent: #3b82f6;
+      --row-hover: #273549;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  main { max-width: 1080px; margin: 0 auto; padding: 2rem 1rem; }
+  h1 { font-size: 1.35rem; margin: 0 0 .25rem; }
+  .subtitle { color: var(--muted); font-size: .9rem; margin: 0 0 1.5rem; }
+  form {
+    display: flex; flex-wrap: wrap; gap: 1rem; align-items: end;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 1.5rem;
+  }
+  .field { display: flex; flex-direction: column; gap: .3rem; }
+  label { font-size: .78rem; color: var(--muted); }
+  input, select {
+    font: inherit; color: var(--text); background: var(--bg);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: .45rem .6rem; min-width: 10rem;
+  }
+  button {
+    font: inherit; font-weight: 600; cursor: pointer;
+    background: var(--accent); color: var(--accent-text);
+    border: none; border-radius: 6px; padding: .55rem 1.4rem;
+  }
+  button:disabled { opacity: .6; cursor: wait; }
+  #status { font-size: .85rem; color: var(--muted); margin-bottom: .75rem; min-height: 1.2em; }
+  #status.error { color: #dc2626; }
+  .table-wrap {
+    overflow-x: auto; background: var(--card);
+    border: 1px solid var(--border); border-radius: 10px;
+  }
+  table { border-collapse: collapse; width: 100%; font-size: .88rem; }
+  th, td { padding: .55rem .9rem; text-align: left; white-space: nowrap; }
+  th {
+    font-size: .74rem; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); border-bottom: 1px solid var(--border);
+  }
+  td { border-bottom: 1px solid var(--border); }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--row-hover); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  th.num { text-align: right; }
+  .empty { padding: 2rem; text-align: center; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Trade Aggregation</h1>
+  <p class="subtitle">Per user / day / trading pair, via <code>POST /api/trades/aggregate/fdw</code> (postgres_fdw)</p>
+
+  <form id="filter-form">
+    <div class="field">
+      <label for="username">Username contains</label>
+      <input id="username" name="username" placeholder="e.g. alice">
+    </div>
+    <div class="field">
+      <label for="tradingPair">Trading pair</label>
+      <select id="tradingPair" name="tradingPair">
+        <option value="">All pairs</option>
+        <option>BTC/USDT</option>
+        <option>ETH/USDT</option>
+        <option>SOL/USDT</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="fromDate">From date (UTC)</label>
+      <input id="fromDate" name="fromDate" type="date">
+    </div>
+    <div class="field">
+      <label for="toDate">To date (UTC, inclusive)</label>
+      <input id="toDate" name="toDate" type="date">
+    </div>
+    <button type="submit" id="search-btn">Search</button>
+  </form>
+
+  <div id="status"></div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>User</th>
+          <th>Date</th>
+          <th>Pair</th>
+          <th class="num">Trades</th>
+          <th class="num">Base qty</th>
+          <th class="num">Quote qty</th>
+          <th class="num">Avg price</th>
+        </tr>
+      </thead>
+      <tbody id="results">
+        <tr><td colspan="7" class="empty">Run a search to load aggregated trades.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</main>
+
+<script>
+  const form = document.getElementById('filter-form');
+  const statusEl = document.getElementById('status');
+  const resultsEl = document.getElementById('results');
+  const searchBtn = document.getElementById('search-btn');
+  const qtyFmt = new Intl.NumberFormat('en-US', { maximumFractionDigits: 8 });
+  const priceFmt = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const request = {
+      username: form.username.value.trim() || null,
+      tradingPair: form.tradingPair.value || null,
+      fromDate: form.fromDate.value || null,
+      toDate: form.toDate.value || null,
+    };
+    searchBtn.disabled = true;
+    statusEl.classList.remove('error');
+    statusEl.textContent = 'Loading…';
+    try {
+      const response = await fetch('/api/trades/aggregate/fdw', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      }
+      render(await response.json());
+    } catch (error) {
+      statusEl.classList.add('error');
+      statusEl.textContent = `Request failed — ${error.message}`;
+    } finally {
+      searchBtn.disabled = false;
+    }
+  });
+
+  function render(rows) {
+    statusEl.textContent = `${rows.length} bucket${rows.length === 1 ? '' : 's'}`;
+    if (rows.length === 0) {
+      resultsEl.innerHTML = '<tr><td colspan="7" class="empty">No trades match these filters.</td></tr>';
+      return;
+    }
+    resultsEl.replaceChildren(...rows.map((row) => {
+      const tr = document.createElement('tr');
+      appendCell(tr, row.username);
+      appendCell(tr, row.tradeDate);
+      appendCell(tr, row.tradingPair);
+      appendCell(tr, row.tradeCount, true);
+      appendCell(tr, qtyFmt.format(row.totalBaseQuantity), true);
+      appendCell(tr, qtyFmt.format(row.totalQuoteQuantity), true);
+      appendCell(tr, priceFmt.format(row.avgPrice), true);
+      return tr;
+    }));
+  }
+
+  function appendCell(tr, value, numeric = false) {
+    const td = document.createElement('td');
+    td.textContent = value;
+    if (numeric) td.className = 'num';
+    tr.appendChild(td);
+  }
+</script>
+</body>
+</html>
