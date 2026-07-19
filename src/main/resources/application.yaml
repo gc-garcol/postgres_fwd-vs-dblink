@@ -36,3 +36,4 @@ remote-db:
     # omit or leave empty to import all tables of the remote schema
     tables:
       - account_details
+      - trades
