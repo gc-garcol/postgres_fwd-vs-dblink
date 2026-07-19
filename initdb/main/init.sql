@@ -1,5 +1,13 @@
 CREATE SCHEMA IF NOT EXISTS postgres_main;
 
+-- Last remote-db config applied by the setup runners; they skip provisioning
+-- when the stored value matches application.yaml.
+CREATE TABLE IF NOT EXISTS postgres_main.system_configs (
+    config_key   VARCHAR(128) PRIMARY KEY,
+    config_value TEXT NOT NULL,
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS postgres_main.users (
     id BIGSERIAL PRIMARY KEY,
     external_id UUID NOT NULL UNIQUE,
